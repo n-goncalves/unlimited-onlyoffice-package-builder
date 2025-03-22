@@ -6,8 +6,8 @@ on:
       - builds-debian-11/*
 
 env:
-  DEBIAN_PACKAGE_SUFFIX: -btactic
-  TAG_SUFFIX: -btactic
+  DEBIAN_PACKAGE_SUFFIX: -oo
+  TAG_SUFFIX: -oo
   DISTRO_FULLNAME: Debian 11
   DISTRO_TAG_PREFIX: debian-11
 
