@@ -1,0 +1,123 @@
+name: release-onlyoffice
+
+on:
+  push:
+    tags:
+      - builds-debian-11-arm/*
+
+env:
+  DEBIAN_PACKAGE_SUFFIX: -oo
+  TAG_SUFFIX: -oo
+  DISTRO_FULLNAME: Debian 11
+  DISTRO_TAG_PREFIX: debian-11
+  ARCH: arm64
+
+jobs:
+  onlyoffice-release:
+    strategy:
+      matrix:
+        TARGET_DISTRO: [ "debian-11" ]
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Free Space - Init
+        run: |
+          echo "$GITHUB_WORKSPACE"
+          df -h
+      - name: Free Space - Remove swap
+        run: |
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          df -h
+      - name: Free Space - Remove boost & tools
+        run: |
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+      - name: Free Space - Remove dotnet
+        run: |
+          sudo rm -rf /usr/share/dotnet/shared/
+          sudo rm -rf /usr/share/dotnet/host/
+          sudo rm -rf /usr/share/dotnet/sdk/
+          df -h
+      - name: Free Space - Remove android
+        run: |
+          sudo rm -rf "$ANDROID_SDK_ROOT"
+          sudo rm -rf /usr/local/lib/android
+          df -h
+      - name: Free Space - Remove swift
+        run: |
+          sudo rm -rf "$SWIFT_PATH"
+          sudo rm -rf /usr/share/swift
+          df -h
+      - name: Free Space - apt-get clean
+        run: |
+          sudo apt-get clean
+          df -h
+      - name: Free Space - Show docker images
+        run: |
+          docker image ls -a
+          df -h
+      - name: Free Space - Remove docker images
+        run: |
+          image_ids=$(docker image ls -aq)
+          if [[ -n $(image_ids) ]]; then
+            docker rmi $(image_ids);
+          fi;
+          df -h
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      - name: Split branch name
+        env:
+          BRANCH: ${{ github.ref_name }}
+        id: split-tag
+        run: echo "version=${BRANCH##*/}" >> $GITHUB_OUTPUT
+      - name: Get Product version
+        env:
+          VERSION: ${{ steps.split-tag.outputs.version }}
+        id: get-product-version
+        run: echo "product-version=${VERSION%.*}" >> $GITHUB_OUTPUT
+      - name: Get Build number
+        env:
+          VERSION: ${{ steps.split-tag.outputs.version }}
+          PRODUCT_VERSION: ${{ steps.get-product-version.outputs.product-version }}
+        id: get-build-number
+        run: echo "build-number=${VERSION##$PRODUCT_VERSION.}" >> $GITHUB_OUTPUT
+      - name: Docker build binaries
+        id: docker-build-binaries
+        run: |
+          ./onlyoffice-package-builder.sh --product-version=${{ steps.get-product-version.outputs.product-version }} --build-number=${{ steps.get-build-number.outputs.build-number }} --unlimited-organization=${{ github.repository_owner }} --tag-suffix=${{ env.TAG_SUFFIX }} --debian-package-suffix=${{ env.DEBIAN_PACKAGE_SUFFIX }} --binaries-only
+      - name: Docker prune all containers
+        id: docker-prune-all-containers
+        run: |
+          docker ps -a
+          docker container prune -f
+          docker ps -a
+      - name: Docker build deb package
+        id: docker-build-deb
+        run: |
+          ./onlyoffice-package-builder.sh --product-version=${{ steps.get-product-version.outputs.product-version }} --build-number=${{ steps.get-build-number.outputs.build-number }} --unlimited-organization=${{ github.repository_owner }} --tag-suffix=${{ env.TAG_SUFFIX }} --debian-package-suffix=${{ env.DEBIAN_PACKAGE_SUFFIX }} --deb-only
+      - name: Get tgz release filename
+        id: deb-release
+        run: |
+          RELEASE_DEB=$(find "${{ github.workspace }}" -name "onlyoffice-documentserver_${{ steps.get-product-version.outputs.product-version }}-${{ steps.get-build-number.outputs.build-number }}${{ env.DEBIAN_PACKAGE_SUFFIX }}_${{ env.ARCH }}.deb" -type f)
+          RELEASE_SHORT_DEB=$(basename ${RELEASE_DEB})
+          echo "filename=${RELEASE_DEB}" >> $GITHUB_OUTPUT
+          echo "shortfilename=${RELEASE_SHORT_DEB}" >> $GITHUB_OUTPUT
+      - name: Release
+        uses: crowbarmaster/GH-Automatic-Releases@v1.6.0
+        with:
+          repo_token: ${{ github.token }}
+          prerelease: false
+          generate_notes: false
+          automatic_release_tag: onlyoffice-unlimited-build-${{ env.DISTRO_TAG_PREFIX }}/${{ steps.split-tag.outputs.version }}-${{ env.ARCH }}
+          title: OnlyOffice ${{ steps.split-tag.outputs.version }} Unlimited Build ( ${{ env.DISTRO_FULLNAME }} ) ${{ env.ARCH }}
+          body: |
+            Make sure to install and check that the default deb binary from OnlyOffice repo works for you.
+            Then install this deb on your system thanks to:
+            ```
+            apt install /path/to/${{ steps.deb-release.outputs.shortfilename }}
+            ```
+          files: |
+            ${{ steps.deb-release.outputs.filename }}
